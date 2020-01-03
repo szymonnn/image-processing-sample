@@ -10,10 +10,10 @@ import android.widget.ImageView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
-import org.pytorch.IValue;
-import org.pytorch.Module;
-import org.pytorch.Tensor;
-import org.pytorch.torchvision.TensorImageUtils;
+import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.support.common.TensorProcessor;
+import org.tensorflow.lite.support.image.TensorImage;
+import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -23,28 +23,27 @@ import java.io.OutputStream;
 
 public class MainActivity extends AppCompatActivity {
 
+    TensorImage tensorImageBuffer = null;
+    TensorBuffer tensorOutputBuffer = null;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
         Bitmap bitmap = null;
-        Module module = null;
+        Interpreter interpreter = null;
         try {
             // creating bitmap from packaged into app android asset 'image.jpg',
             // app/src/main/assets/image.jpg
-            bitmap = BitmapFactory.decodeStream(getAssets().open("640x480.jpg"));
+            bitmap = BitmapFactory.decodeStream(getAssets().open("amber.jpg"));
             // loading serialized torchscript module from packaged into app android asset model.pt,
             // app/src/model/assets/model.pt
-            module = Module.load(assetFilePath(this, "45_2019_12_16_1449_traced_640_480.pt"));
+            interpreter = new Interpreter(assetFilePath(this, "converted_model.tflite"));
         } catch (IOException e) {
             Log.e("PytorchHelloWorld", "Error reading assets", e);
             finish();
         }
-
-        // showing image on UI
-        ImageView imageView = findViewById(R.id.image);
-        imageView.setImageBitmap(bitmap);
 
         long timeBeforeOperation = System.currentTimeMillis();
         int[] inputPixels = new int[bitmap.getHeight() * bitmap.getWidth()];
@@ -52,50 +51,45 @@ public class MainActivity extends AppCompatActivity {
 
         Log.i("Time get pixels: ", "" + (System.currentTimeMillis() - timeBeforeOperation));
         float[] inputData = new float[bitmap.getHeight() * bitmap.getWidth() * 3];
-        float[] normMeanRGB = new float[]{0.485f, 0.456f, 0.406f};
-        float[] normStdRGB = new float[]{0.229f, 0.224f, 0.225f};
         final int offset_g = inputPixels.length;
         final int offset_b = 2 * inputPixels.length;
         for (int i = 0; i < inputPixels.length; i++) {
-            float r = Color.red(inputPixels[i]) / 255f;
-            float g = Color.green(inputPixels[i]) / 255f;
-            float b = Color.blue(inputPixels[i]) / 255f;
-//            float rF = (r - normMeanRGB[0]) / normStdRGB[0];
-//            float gF = (g - normMeanRGB[1]) / normStdRGB[1];
-//            float bF = (b - normMeanRGB[2]) / normStdRGB[2];
+            float r = Color.red(inputPixels[i]);
+            float g = Color.green(inputPixels[i]);
+            float b = Color.blue(inputPixels[i]);
             inputData[i] = r;
             inputData[offset_g + i] = g;
             inputData[offset_b + i] = b;
         }
+
         Log.i("Time normalization: ", "" + (System.currentTimeMillis() - timeBeforeOperation));
 
-        final Tensor inputTensor = Tensor.fromBlob(inputData, new long[]{1, 3, bitmap.getHeight(), bitmap.getWidth()});
-        // running the model
+        tensorImageBuffer = new TensorImage(interpreter.getInputTensor(0).dataType());
+        tensorOutputBuffer = TensorBuffer.createFixedSize(interpreter.getOutputTensor(0).shape(), interpreter.getOutputTensor(0).dataType());
+        tensorImageBuffer.load(inputData, new int[]{224, 224, 3});
 
         Log.i("Time before inference: ", "" + (System.currentTimeMillis() - timeBeforeOperation));
-        final Tensor outputTensor = module.forward(IValue.from(inputTensor)).toTensor();
+        interpreter.run(tensorImageBuffer.getBuffer(), tensorOutputBuffer.getBuffer().rewind());
 
         Log.i("Time after inference: ", "" + (System.currentTimeMillis() - timeBeforeOperation));
-        // getting tensor content as java array of floats
-        final float[] scores = outputTensor.getDataAsFloatArray();
-        final float[] output = new float[scores.length];
+        TensorProcessor tensorProcessor = new TensorProcessor.Builder().build();
+        float[] output = tensorProcessor.process(tensorOutputBuffer).getFloatArray();
 
-        for (int i = 0; i< scores.length; i++) {
-            output[i] = Math.min(255f, scores[i]);
-        }
+        // showing image on UI
+        ImageView imageView = findViewById(R.id.image);
 
         Log.i("Time before bitmap: ", "" + (System.currentTimeMillis() - timeBeforeOperation));
         Bitmap newBitmap = Bitmap.createBitmap(bitmap.getWidth(), bitmap.getHeight(), Bitmap.Config.ARGB_8888);
 
-        BitmapManipulator.setPixels(newBitmap, floatArrayToIntArray(output), newBitmap.getWidth(), newBitmap.getHeight());
+        BitmapManipulator.setPixels(newBitmap, floatArrayToInt(output), newBitmap.getWidth(), newBitmap.getHeight());
         Log.i("Time after operations: ", "" + (System.currentTimeMillis() - timeBeforeOperation));
         imageView.setImageBitmap(newBitmap);
     }
 
-    private int[] floatArrayToIntArray(float[] floatArray) {
-        int[] intArray = new int[floatArray.length];
-        for (int i = 0; i < intArray.length; i++) {
-            intArray[i] = (int) floatArray[i];
+    private int [] floatArrayToInt(float [] array) {
+        int [] intArray = new int[array.length];
+        for (int i = 0; i < array.length; i++) {
+            intArray[i] = (int) array[i];
         }
         return intArray;
     }
@@ -105,10 +99,10 @@ public class MainActivity extends AppCompatActivity {
      *
      * @return absolute file path
      */
-    public static String assetFilePath(Context context, String assetName) throws IOException {
+    public static File assetFilePath(Context context, String assetName) throws IOException {
         File file = new File(context.getFilesDir(), assetName);
         if (file.exists() && file.length() > 0) {
-            return file.getAbsolutePath();
+            return file;
         }
 
         try (InputStream is = context.getAssets().open(assetName)) {
@@ -120,7 +114,7 @@ public class MainActivity extends AppCompatActivity {
                 }
                 os.flush();
             }
-            return file.getAbsolutePath();
+            return file;
         }
     }
 }
