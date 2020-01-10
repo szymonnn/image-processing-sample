@@ -11,6 +11,7 @@ import android.widget.ImageView;
 import androidx.appcompat.app.AppCompatActivity;
 
 import org.tensorflow.lite.Interpreter;
+import org.tensorflow.lite.gpu.GpuDelegate;
 import org.tensorflow.lite.support.common.TensorProcessor;
 import org.tensorflow.lite.support.image.TensorImage;
 import org.tensorflow.lite.support.tensorbuffer.TensorBuffer;
@@ -33,13 +34,15 @@ public class MainActivity extends AppCompatActivity {
 
         Bitmap bitmap = null;
         Interpreter interpreter = null;
+        GpuDelegate delegate = new GpuDelegate();
         try {
             // creating bitmap from packaged into app android asset 'image.jpg',
             // app/src/main/assets/image.jpg
             bitmap = BitmapFactory.decodeStream(getAssets().open("amber.jpg"));
             // loading serialized torchscript module from packaged into app android asset model.pt,
             // app/src/model/assets/model.pt
-            interpreter = new Interpreter(assetFilePath(this, "converted_model.tflite"));
+            Interpreter.Options options = (new Interpreter.Options()).addDelegate(delegate);
+            interpreter = new Interpreter(assetFilePath(this, "converted_model.tflite"), options);
         } catch (IOException e) {
             Log.e("PytorchHelloWorld", "Error reading assets", e);
             finish();
@@ -84,6 +87,7 @@ public class MainActivity extends AppCompatActivity {
         BitmapManipulator.setPixels(newBitmap, floatArrayToInt(output), newBitmap.getWidth(), newBitmap.getHeight());
         Log.i("Time after operations: ", "" + (System.currentTimeMillis() - timeBeforeOperation));
         imageView.setImageBitmap(newBitmap);
+        delegate.close();
     }
 
     private int [] floatArrayToInt(float [] array) {
